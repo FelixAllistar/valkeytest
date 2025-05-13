@@ -16,21 +16,56 @@ let redis
 
 async function connectToRedis() {
   try {
-    redis = new Redis(REDIS_URL)
-    fastify.log.info('Attempting to connect to Redis/Valkey...')
+    redis = new Redis(REDIS_URL, { 
+      // Adding a connect timeout to get a clearer error if it's a network issue
+      connectTimeout: 10000, // 10 seconds
+      // Optional: a specific retry strategy can be helpful for debugging
+      retryStrategy(times) {
+        const delay = Math.min(times * 150, 2000); // wait up to 2 seconds
+        fastify.log.warn(`Redis/Valkey: Retrying connection (attempt ${times}), delay ${delay}ms`);
+        return delay;
+      }
+    });
+    fastify.log.info('Attempting to connect to Redis/Valkey...');
 
     await new Promise((resolve, reject) => {
       redis.on('connect', () => {
-        fastify.log.info('Successfully connected to Redis/Valkey!')
-        resolve()
-      })
+        fastify.log.info('Successfully connected to Redis/Valkey!');
+        resolve();
+      });
       redis.on('error', (err) => {
-        fastify.log.error('Redis/Valkey connection error:', err)
-        reject(err)
-      })
-    })
+        // Log the error object and a more descriptive message
+        fastify.log.error({ err: { message: err.message, stack: err.stack, code: err.code, address: err.address, port: err.port } }, 'Redis/Valkey connection error event');
+        // No need to reject here if we want ioredis to handle retries based on retryStrategy
+        // If we reject, the server might not start or handle it as gracefully.
+        // The 'ready' event or further errors will indicate the final state.
+      });
+      redis.on('ready', () => {
+        fastify.log.info('Redis/Valkey client is ready!');
+        // If we resolve on 'connect', we might not need to resolve again on 'ready'
+        // unless the initial promise is still pending due to no 'connect' yet.
+        if (redis.status === 'ready' && !fastify.server.listening) {
+             // This ensures the initial connection promise resolves if 'connect' was missed or delayed
+            resolve(); 
+        }
+      });
+      redis.on('close', () => {
+        fastify.log.warn('Redis/Valkey connection closed.');
+      });
+      redis.on('reconnecting', () => {
+        fastify.log.info('Redis/Valkey client is reconnecting...');
+      });
+      redis.on('end', () => {
+        fastify.log.warn('Redis/Valkey connection has ended (no more retries).');
+        // This is a good place to reject if the initial connection never established
+        // and we want the connectToRedis promise to fail.
+        if (!redis.status || redis.status !== 'ready') {
+            reject(new Error('Failed to connect to Redis/Valkey after retries.'));
+        }
+      });
+    });
   } catch (err) {
-    fastify.log.error('Failed to initialize Redis/Valkey connection:', err)
+    fastify.log.error({ err: { message: err.message, stack: err.stack, code: err.code } }, 'Failed to initialize Redis/Valkey connection in try-catch block');
     // We might want to exit or retry, but for now, we'll let the server start
     // and the endpoints will show errors.
   }
