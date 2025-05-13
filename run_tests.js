@@ -15,11 +15,18 @@ async function makeRequest(path, options = {}, description) {
   }
   process.stdout.write('\n');
 
+  const headers = { ...options.headers };
+  if (options.body && options.method !== 'DELETE') { // Only add Content-Type if there is a body
+    headers['Content-Type'] = 'application/json';
+  } else if (!options.body && options.method === 'DELETE') {
+    // Ensure no Content-Type is sent for DELETE if there's no body, or remove it if it was set
+    delete headers['Content-Type']; 
+  }
 
   try {
     const response = await fetch(`${BASE_URL}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...options.headers },
-      ...options,
+      ...options, // Spread options first
+      headers,    // Then override headers
     });
     const responseBody = await response.json().catch(() => response.text()); // Try to parse JSON, fallback to text
 
