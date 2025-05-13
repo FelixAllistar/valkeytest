@@ -16,16 +16,24 @@ let redis
 
 async function connectToRedis() {
   try {
-    redis = new Redis(REDIS_URL, { 
-      // Adding a connect timeout to get a clearer error if it's a network issue
+    const redisOptions = { 
       connectTimeout: 10000, // 10 seconds
-      // Optional: a specific retry strategy can be helpful for debugging
       retryStrategy(times) {
         const delay = Math.min(times * 150, 2000); // wait up to 2 seconds
         fastify.log.warn(`Redis/Valkey: Retrying connection (attempt ${times}), delay ${delay}ms`);
         return delay;
       }
-    });
+    };
+
+    // Add TLS options if the URL is rediss://
+    if (REDIS_URL.startsWith('rediss://')) {
+      redisOptions.tls = {
+        rejectUnauthorized: false // !!! DANGER: ONLY FOR LOCAL DEV WITH SELF-SIGNED CERT !!!
+      };
+      fastify.log.warn('Using rediss:// with rejectUnauthorized:false for local SSL testing.');
+    }
+
+    redis = new Redis(REDIS_URL, redisOptions);
     fastify.log.info('Attempting to connect to Redis/Valkey...');
 
     await new Promise((resolve, reject) => {
